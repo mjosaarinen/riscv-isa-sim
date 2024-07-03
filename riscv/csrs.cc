@@ -411,9 +411,9 @@ base_status_csr_t::base_status_csr_t(processor_t* const proc, const reg_t addr):
 reg_t base_status_csr_t::compute_sstatus_write_mask() const noexcept {
   // If a configuration has FS bits, they will always be accessible no
   // matter the state of misa.
-  const bool has_fs = (proc->extension_enabled('S') || proc->extension_enabled('F')
-              || proc->extension_enabled('V')) && !proc->extension_enabled(EXT_ZFINX);
-  const bool has_vs = proc->extension_enabled('V');
+  const bool has_fs = (proc->extension_enabled('S') || proc->extension_enabled('F')) && !proc->extension_enabled(EXT_ZFINX);
+  // Implementations w/o V may still have mstatus.vs,
+  const bool has_vs = proc->any_vector_extensions();
   return 0
     | (proc->extension_enabled('S') ? (SSTATUS_SIE | SSTATUS_SPIE | SSTATUS_SPP) : 0)
     | (has_page ? (SSTATUS_SUM | SSTATUS_MXR) : 0)
@@ -1312,7 +1312,7 @@ reg_t dcsr_csr_t::read() const noexcept {
   result = set_field(result, DCSR_EBREAKU, ebreaku);
   result = set_field(result, CSR_DCSR_EBREAKVS, ebreakvs);
   result = set_field(result, CSR_DCSR_EBREAKVU, ebreakvu);
-  result = set_field(result, DCSR_STOPCYCLE, 0);
+  result = set_field(result, DCSR_STOPCOUNT, 0);
   result = set_field(result, DCSR_STOPTIME, 0);
   result = set_field(result, DCSR_CAUSE, cause);
   result = set_field(result, DCSR_STEP, step);
@@ -1331,7 +1331,7 @@ bool dcsr_csr_t::unlogged_write(const reg_t val) noexcept {
   ebreaku = proc->extension_enabled('U') ? get_field(val, DCSR_EBREAKU) : false;
   ebreakvs = proc->extension_enabled('H') ? get_field(val, CSR_DCSR_EBREAKVS) : false;
   ebreakvu = proc->extension_enabled('H') ? get_field(val, CSR_DCSR_EBREAKVU) : false;
-  halt = get_field(val, DCSR_HALT);
+  halt = get_field(val, DCSR_NMIP);
   v = proc->extension_enabled('H') ? get_field(val, CSR_DCSR_V) : false;
   pelp = proc->extension_enabled(EXT_ZICFILP) ?
          static_cast<elp_t>(get_field(val, DCSR_PELP)) : elp_t::NO_LP_EXPECTED;
@@ -1429,8 +1429,6 @@ vector_csr_t::vector_csr_t(processor_t* const proc, const reg_t addr, const reg_
 
 void vector_csr_t::verify_permissions(insn_t insn, bool write) const {
   require_vector_vs;
-  if (!proc->extension_enabled('V'))
-    throw trap_illegal_instruction(insn.bits());
   basic_csr_t::verify_permissions(insn, write);
 }
 
@@ -1452,8 +1450,6 @@ vxsat_csr_t::vxsat_csr_t(processor_t* const proc, const reg_t addr):
 
 void vxsat_csr_t::verify_permissions(insn_t insn, bool write) const {
   require_vector_vs;
-  if (!proc->extension_enabled('V'))
-    throw trap_illegal_instruction(insn.bits());
   masked_csr_t::verify_permissions(insn, write);
 }
 
