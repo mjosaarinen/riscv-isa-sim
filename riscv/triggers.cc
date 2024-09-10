@@ -146,7 +146,7 @@ reg_t mcontrol_t::tdata1_read(const processor_t * const proc) const noexcept {
   auto xlen = proc->get_xlen();
   v = set_field(v, MCONTROL_TYPE(xlen), CSR_TDATA1_TYPE_MCONTROL);
   v = set_field(v, CSR_MCONTROL_DMODE(xlen), dmode);
-  v = set_field(v, MCONTROL_MASKMAX(xlen), 0);
+  v = set_field(v, MCONTROL_MASKMAX(xlen), maskmax);
   v = set_field(v, CSR_MCONTROL_HIT, hit);
   v = set_field(v, MCONTROL_SELECT, select);
   v = set_field(v, MCONTROL_TIMING, timing);
@@ -171,7 +171,7 @@ void mcontrol_t::tdata1_write(processor_t * const proc, const reg_t val, const b
   timing = legalize_timing(val, MCONTROL_TIMING, MCONTROL_SELECT, MCONTROL_EXECUTE, MCONTROL_LOAD);
   action = legalize_action(val, MCONTROL_ACTION, CSR_MCONTROL_DMODE(xlen));
   chain = allow_chain ? get_field(val, MCONTROL_CHAIN) : 0;
-  match = legalize_match(get_field(val, MCONTROL_MATCH));
+  match = legalize_match(get_field(val, MCONTROL_MATCH), maskmax);
   m = get_field(val, MCONTROL_M);
   s = proc->extension_enabled_const('S') ? get_field(val, CSR_MCONTROL_S) : 0;
   u = proc->extension_enabled_const('U') ? get_field(val, CSR_MCONTROL_U) : 0;
@@ -195,13 +195,17 @@ bool mcontrol_common_t::simple_match(unsigned xlen, reg_t value) const {
       return value < tdata2;
     case MATCH_MASK_LOW:
       {
-        reg_t mask = tdata2 >> (xlen/2);
-        return (value & mask) == (tdata2 & mask);
+        reg_t tdata2_high = tdata2 >> (xlen/2);
+        reg_t tdata2_low = tdata2 & ((reg_t(1) << (xlen/2)) - 1);
+        reg_t value_low = value & ((reg_t(1) << (xlen/2)) - 1);
+        return (value_low & tdata2_high) == tdata2_low;
       }
     case MATCH_MASK_HIGH:
       {
-        reg_t mask = tdata2 >> (xlen/2);
-        return ((value >> (xlen/2)) & mask) == (tdata2 & mask);
+        reg_t tdata2_high = tdata2 >> (xlen/2);
+        reg_t tdata2_low = tdata2 & ((reg_t(1) << (xlen/2)) - 1);
+        reg_t value_high = value >> (xlen/2);
+        return (value_high & tdata2_high) == tdata2_low;
       }
   }
   assert(0);
@@ -240,11 +244,11 @@ std::optional<match_result_t> mcontrol_common_t::detect_memory_access_match(proc
   return std::nullopt;
 }
 
-mcontrol_common_t::match_t mcontrol_common_t::legalize_match(reg_t val) noexcept
+mcontrol_common_t::match_t mcontrol_common_t::legalize_match(reg_t val, reg_t maskmax) noexcept
 {
   switch (val) {
+    case MATCH_NAPOT: if (maskmax == 0) return MATCH_EQUAL;
     case MATCH_EQUAL:
-    case MATCH_NAPOT:
     case MATCH_GE:
     case MATCH_LT:
     case MATCH_MASK_LOW:
@@ -261,7 +265,14 @@ bool mcontrol_common_t::legalize_timing(reg_t val, reg_t timing_mask, reg_t sele
     return TIMING_AFTER;
   if (get_field(val, execute_mask))
     return TIMING_BEFORE;
-  return get_field(val, timing_mask);
+  if (timing_mask) {
+    // Use the requested timing.
+    return get_field(val, timing_mask);
+  } else {
+    // For mcontrol6 you can't request a timing. Default to before since that's
+    // most useful to the user.
+    return TIMING_BEFORE;
+  }
 }
 
 reg_t mcontrol6_t::tdata1_read(const processor_t * const proc) const noexcept {
@@ -290,13 +301,14 @@ void mcontrol6_t::tdata1_write(processor_t * const proc, const reg_t val, const 
   auto xlen = proc->get_const_xlen();
   assert(get_field(val, CSR_MCONTROL6_TYPE(xlen)) == CSR_TDATA1_TYPE_MCONTROL6);
   dmode = get_field(val, CSR_MCONTROL6_DMODE(xlen));
+  const reg_t maskmax6 = xlen - 1;
   vs = get_field(val, CSR_MCONTROL6_VS);
   vu = get_field(val, CSR_MCONTROL6_VU);
   hit = hit_t(2 * get_field(val, CSR_MCONTROL6_HIT1) + get_field(val, CSR_MCONTROL6_HIT0)); // 2-bit field {hit1,hit0}
   select = get_field(val, CSR_MCONTROL6_SELECT);
   action = legalize_action(val, CSR_MCONTROL6_ACTION, CSR_MCONTROL6_DMODE(xlen));
   chain = allow_chain ? get_field(val, CSR_MCONTROL6_CHAIN) : 0;
-  match = legalize_match(get_field(val, CSR_MCONTROL6_MATCH));
+  match = legalize_match(get_field(val, CSR_MCONTROL6_MATCH), maskmax6);
   m = get_field(val, CSR_MCONTROL6_M);
   s = proc->extension_enabled_const('S') ? get_field(val, CSR_MCONTROL6_S) : 0;
   u = proc->extension_enabled_const('U') ? get_field(val, CSR_MCONTROL6_U) : 0;

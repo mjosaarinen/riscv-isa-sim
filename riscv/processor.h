@@ -18,6 +18,7 @@
 #include "../fesvr/memif.h"
 #include "vector_unit.h"
 
+#define FIRST_HPMCOUNTER 3
 #define N_HPMCOUNTERS 29
 
 class processor_t;
@@ -61,7 +62,7 @@ struct insn_desc_t
 };
 
 // regnum, data
-typedef std::unordered_map<reg_t, freg_t> commit_log_reg_t;
+typedef std::map<reg_t, freg_t> commit_log_reg_t;
 
 // addr, value, size
 typedef std::vector<std::tuple<reg_t, uint64_t, uint8_t>> commit_log_mem_t;
@@ -70,6 +71,7 @@ typedef std::vector<std::tuple<reg_t, uint64_t, uint8_t>> commit_log_mem_t;
 struct state_t
 {
   void reset(processor_t* const proc, reg_t max_isa);
+  void add_csr(reg_t addr, const csr_t_p& csr);
 
   reg_t pc;
   regfile_t<reg_t, NXPR, true> XPR;
@@ -167,8 +169,6 @@ struct state_t
   csr_t_p stimecmp;
   csr_t_p vstimecmp;
 
-  csr_t_p srmcfg;
-
   csr_t_p ssp;
 
   bool serialized; // whether timer CSRs are in a well-defined state
@@ -189,6 +189,11 @@ struct state_t
   int last_inst_flen;
 
   elp_t elp;
+
+  bool critical_error;
+
+ private:
+  void csr_init(processor_t* const proc, reg_t max_isa);
 };
 
 class opcode_cache_entry_t {
@@ -236,12 +241,13 @@ class opcode_cache_entry_t {
 class processor_t : public abstract_device_t
 {
 public:
-  processor_t(const isa_parser_t *isa, const cfg_t* cfg,
+  processor_t(const char* isa_str, const char* priv_str,
+              const cfg_t* cfg,
               simif_t* sim, uint32_t id, bool halt_on_reset,
               FILE *log_file, std::ostream& sout_); // because of command line option --log and -s we need both
   ~processor_t();
 
-  const isa_parser_t &get_isa() { return *isa; }
+  const isa_parser_t &get_isa() { return isa; }
   const cfg_t &get_cfg() { return *cfg; }
 
   void set_debug(bool value);
@@ -303,7 +309,7 @@ public:
   void set_extension_enable(unsigned char ext, bool enable) {
     assert(!extension_assumed_const[ext]);
     extension_dynamic[ext] = true;
-    extension_enable_table[ext] = enable && isa->extension_enabled(ext);
+    extension_enable_table[ext] = enable && isa.extension_enabled(ext);
   }
   void set_impl(uint8_t impl, bool val) { impl_table[impl] = val; }
   bool supports_impl(uint8_t impl) const {
@@ -362,7 +368,7 @@ public:
   void check_if_lpad_required();
 
 private:
-  const isa_parser_t * const isa;
+  const isa_parser_t isa;
   const cfg_t * const cfg;
 
   simif_t* sim;
@@ -401,7 +407,7 @@ private:
   void register_insn(insn_desc_t, bool);
   int paddr_bits();
 
-  void enter_debug_mode(uint8_t cause);
+  void enter_debug_mode(uint8_t cause, uint8_t ext_cause);
 
   void debug_output_log(std::stringstream *s); // either output to interactive user or write to log file
 
