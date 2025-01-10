@@ -2252,6 +2252,10 @@ void disassembler_t::add_instructions(const isa_parser_t* isa, bool strict)
       DISASM_INSN("c.sspopchk", c_sspopchk_x5, 0, {&rvc_t0});
     }
   }
+
+  if (isa->extension_enabled(EXT_ZVKK)) {
+    DEFINE_VECTOR_VIU(vkeccak_vi);
+  }
 }
 
 disassembler_t::disassembler_t(const isa_parser_t *isa, bool strict)
