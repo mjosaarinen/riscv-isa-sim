@@ -1075,6 +1075,7 @@ bool virtualized_satp_csr_t::unlogged_write(const reg_t val) noexcept {
 wide_counter_csr_t::wide_counter_csr_t(processor_t* const proc, const reg_t addr, smcntrpmf_csr_t_p config_csr):
   csr_t(proc, addr),
   val(0),
+  written(false),
   config_csr(config_csr) {
 }
 
@@ -1083,7 +1084,15 @@ reg_t wide_counter_csr_t::read() const noexcept {
 }
 
 void wide_counter_csr_t::bump(const reg_t howmuch) noexcept {
-  if (is_counting_enabled()) {
+  if (written) {
+    // Because writing a CSR serializes the simulator, howmuch should
+    // reflect exactly one instruction: the explicit CSR write.
+    // If counting is disabled, though, howmuch will be zero.
+    assert(howmuch <= 1);
+    // The ISA mandates that explicit writes to instret take precedence
+    // over the instret, so simply skip the increment.
+    written = false;
+  } else if (is_counting_enabled()) {
     val += howmuch;  // to keep log reasonable size, don't log every bump
   }
   // Clear cached value
@@ -1091,21 +1100,13 @@ void wide_counter_csr_t::bump(const reg_t howmuch) noexcept {
 }
 
 bool wide_counter_csr_t::unlogged_write(const reg_t val) noexcept {
-  this->val = val;
-  // The ISA mandates that if an instruction writes instret, the write
-  // takes precedence over the increment to instret.  However, Spike
-  // unconditionally increments instret after executing an instruction.
-  // Correct for this artifact by decrementing instret here.
-  // Ensure that Smctrpmf hasn't disabled counting.
-  if (is_counting_enabled()) {
-    this->val--;
-  }
-  return true;
-}
+  // Because writing a CSR serializes the simulator and is followed by a
+  // bump, back-to-back writes with no intervening bump should never occur.
+  assert(!written);
+  written = true;
 
-reg_t wide_counter_csr_t::written_value() const noexcept {
-  // Re-adjust for upcoming bump()
-  return this->val + 1;
+  this->val = val;
+  return true;
 }
 
 // Returns true if counting is not inhibited by Smcntrpmf.
@@ -1230,7 +1231,7 @@ hideleg_csr_t::hideleg_csr_t(processor_t* const proc, const reg_t addr, csr_t_p 
 
 reg_t hideleg_csr_t::read() const noexcept {
   return masked_csr_t::read() & mideleg->read();
-};
+}
 
 hgatp_csr_t::hgatp_csr_t(processor_t* const proc, const reg_t addr):
   basic_csr_t(proc, addr, 0) {
@@ -1810,7 +1811,7 @@ srmcfg_csr_t::srmcfg_csr_t(processor_t* const proc, const reg_t addr, const reg_
   masked_csr_t(proc, addr, mask, init) {
 }
 
-void srmcfg_csr_t::verify_permissions(insn_t insn, bool write) const {
+void srmcfg_csr_t::verify_permissions(insn_t insn, bool write UNUSED) const {
   if (!proc->extension_enabled(EXT_SSQOSID))
     throw trap_illegal_instruction(insn.bits());
 
