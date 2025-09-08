@@ -2238,6 +2238,10 @@ void disassembler_t::add_instructions(const isa_parser_t* isa, bool strict)
       DISASM_INSN("c.sspush", c_sspush_x1, 0, {&rvc_ra});
       DISASM_INSN("c.sspopchk", c_sspopchk_x5, 0, {&rvc_t0});
     }
+    
+    if (isa->extension_enabled(EXT_ZVKK)) {
+      DEFINE_VECTOR_VIU(vkeccak_vi);
+    }
   }
 }
 
