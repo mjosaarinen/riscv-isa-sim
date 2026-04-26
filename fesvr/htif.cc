@@ -20,6 +20,11 @@
 #include <unistd.h>
 #include <signal.h>
 #include <getopt.h>
+#include <libgen.h>
+#include <limits.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 /* Attempt to determine the execution prefix automatically.  autoconf
  * sets PREFIX, and pconfigure sets __PCONFIGURE__PREFIX. */
@@ -33,6 +38,10 @@
 
 #ifndef TARGET_DIR
 # define TARGET_DIR "/" TARGET_ARCH "/bin/"
+#endif
+
+#ifndef PROC_SELF_EXE
+# define PROC_SELF_EXE "/proc/self/exe"
 #endif
 
 static volatile bool signal_exit = false;
@@ -107,6 +116,20 @@ static void bad_address(const std::string& situation, reg_t addr)
   exit(-1);
 }
 
+static std::string get_prefix_from_arg0() {
+  char exe_path[PATH_MAX];
+#ifdef __APPLE__
+  uint32_t bufsize = PATH_MAX - 1;
+  ssize_t len = _NSGetExecutablePath(exe_path, &bufsize) == 0 ? bufsize : -1;
+#else
+  ssize_t len = readlink(PROC_SELF_EXE, exe_path, PATH_MAX - 1);
+#endif
+  if (len == -1)
+    return PREFIX;
+  exe_path[len] = '\0';
+  return std::string(dirname(exe_path)) + "/..";
+}
+
 std::map<std::string, uint64_t> htif_t::load_payload(const std::string& payload, reg_t* entry, reg_t load_offset)
 {
   std::string path;
@@ -114,14 +137,15 @@ std::map<std::string, uint64_t> htif_t::load_payload(const std::string& payload,
     path = payload;
   else if (payload.find('/') == std::string::npos)
   {
-    std::string test_path = PREFIX TARGET_DIR + payload;
+    std::string prefix = get_prefix_from_arg0();
+    std::string test_path = prefix + TARGET_DIR + payload;
     if (access(test_path.c_str(), F_OK) == 0)
       path = test_path;
     else
       throw std::runtime_error(
         "could not open " + payload + "; searched paths:\n" +
         "\t. (current directory)\n" +
-        "\t" + PREFIX TARGET_DIR + " (based on configured --prefix and --with-target)"
+        "\t" + prefix + TARGET_DIR + " (based on configured --prefix and --with-target)"
       );
   }
 
@@ -253,8 +277,8 @@ void htif_t::clear_chunk(addr_t taddr, size_t len)
 {
   std::vector<uint8_t> zeros(chunk_max_size(), 0);
 
-  for (size_t pos = 0; pos < len; pos += chunk_max_size())
-    write_chunk(taddr + pos, std::min(len - pos, chunk_max_size()), &zeros[0]);
+  for (size_t pos = 0; pos < len; pos += zeros.size())
+    write_chunk(taddr + pos, std::min(len - pos, zeros.size()), &zeros[0]);
 }
 
 int htif_t::run()
