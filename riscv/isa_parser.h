@@ -160,6 +160,7 @@ protected:
 
 private:
   void add_extension(const std::string&, const char*);
+  void apply_zve_properties(const std::string&, const char*);
 };
 
 #endif
